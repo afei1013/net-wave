@@ -18,9 +18,10 @@ export interface AppHandle {
 export async function startApp(opts: { dataDir?: string; env?: Record<string, string> } = {}): Promise<AppHandle> {
   const port = 20000 + Math.floor(Math.random() * 20000)
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'net-wave-test-'))
-  const tsx = resolve(process.cwd(), 'node_modules/.bin/tsx')
+  // Windows 下 .bin/tsx 是 sh 垫片无法直接 spawn，统一用 node 执行 tsx 的 CLI 入口
+  const tsxCli = resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs')
 
-  const child = spawn(tsx, ['server.ts'], {
+  const child = spawn(process.execPath, [tsxCli, 'server.ts'], {
     cwd: process.cwd(),
     env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, NODE_ENV: 'development', ...opts.env },
     stdio: 'ignore',

@@ -15,6 +15,7 @@ import { broadcastRoomOnline, roomMemberIds } from './src/rooms'
 import { getHub } from './src/hub'
 import { clientIpFromRequest, clientMacFromRequest, lookupMac } from './src/net-info'
 import { ensureAdminPassword } from './src/admin'
+import { runAutoCleanIfDue } from './src/auto-clean'
 
 // tsx 不加载 .env*，Next 又要等到自身初始化才加载；
 // 管理员密码等启动期逻辑必须先于 next() 拿到 env，故在此显式加载（幂等）
@@ -156,4 +157,14 @@ wss.on('connection', (ws, req) => {
 
 server.listen(port, () => {
   console.log(`net-wave 服务中心已启动: http://localhost:${port} (dev=${dev}, data=${dataDir})`)
+
+  // 定时全量清理：启动即检查一次，之后每小时复查；是否到期由配置决定（未开启/未到期为空操作）
+  const checkAutoClean = () => {
+    const stats = runAutoCleanIfDue()
+    if (stats) {
+      console.log(`定时清理完成: ${stats.messages} 条消息、${stats.rooms} 个房间、${stats.files} 个文件已清空`)
+    }
+  }
+  checkAutoClean()
+  setInterval(checkAutoClean, 60 * 60 * 1000)
 })

@@ -55,6 +55,12 @@ interface AdminRoomRequest {
   createdAt: number
 }
 
+interface AutoCleanConfig {
+  enabled: boolean
+  days: number
+  lastRun: number | null
+}
+
 function formatDateTime(ts: number): string {
   const d = new Date(ts)
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -123,6 +129,11 @@ export default function AdminPage() {
   const [approvalEnabled, setApprovalEnabled] = useState<boolean | null>(null)
   // 行级操作进行中标记：审批按钮防重复点击
   const [actingId, setActingId] = useState<number | null>(null)
+  // 定时清理配置 + 表单态
+  const [cleanConfig, setCleanConfig] = useState<AutoCleanConfig | null>(null)
+  const [cleanDaysInput, setCleanDaysInput] = useState('')
+  const [cleanSaving, setCleanSaving] = useState(false)
+  const [cleanRunning, setCleanRunning] = useState(false)
 
   const loadRooms = useCallback(async () => {
     const res = await fetch('/api/admin/rooms')
@@ -151,6 +162,14 @@ export default function AdminPage() {
     setApprovalEnabled(body.enabled)
   }, [])
 
+  const loadCleanConfig = useCallback(async () => {
+    const res = await fetch('/api/admin/auto-clean')
+    if (res.status === 401) return
+    const body = (await res.json()) as AutoCleanConfig
+    setCleanConfig(body)
+    setCleanDaysInput(String(body.days))
+  }, [])
+
   useEffect(() => {
     void (async () => {
       const res = await fetch('/api/admin/session')
@@ -160,9 +179,10 @@ export default function AdminPage() {
         void loadRooms()
         void loadRequests()
         void loadApproval()
+        void loadCleanConfig()
       }
     })()
-  }, [loadRooms, loadRequests, loadApproval])
+  }, [loadRooms, loadRequests, loadApproval, loadCleanConfig])
 
   // 待审列表轮询：管理后台无 WS 连接，15 秒自动刷新以便及时看到新申请
   useEffect(() => {
@@ -182,6 +202,7 @@ export default function AdminPage() {
       void loadRooms()
       void loadRequests()
       void loadApproval()
+      void loadCleanConfig()
       return
     }
     const body = (await res.json().catch(() => ({}))) as { error?: string }
@@ -193,6 +214,7 @@ export default function AdminPage() {
     setAuthed(false)
     setRooms(null)
     setRequests(null)
+    setCleanConfig(null)
   }
 
   const deleteRoom = async (roomId: number, name: string) => {
@@ -241,6 +263,64 @@ export default function AdminPage() {
     }
     setApprovalEnabled(enabled)
     toast.success(enabled ? '已开启审批：建房与加入需管理员同意' : '已关闭审批：建房与加入恢复自由模式')
+  }
+
+  /** 定时清理开关：即时生效 */
+  const toggleCleanEnabled = async (enabled: boolean) => {
+    const res = await fetch('/api/admin/auto-clean', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+    if (!res.ok) {
+      toast.error('切换定时清理开关失败')
+      return
+    }
+    const body = (await res.json()) as AutoCleanConfig
+    setCleanConfig(body)
+    toast.success(enabled ? `已开启定时清理：每 ${body.days} 天全量清空一次` : '已关闭定时清理')
+  }
+
+  /** 保存清理周期天数 */
+  const saveCleanDays = async () => {
+    setCleanSaving(true)
+    try {
+      const res = await fetch('/api/admin/auto-clean', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: Number(cleanDaysInput) }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        toast.error(body.error ?? '保存失败')
+        return
+      }
+      const body = (await res.json()) as AutoCleanConfig
+      setCleanConfig(body)
+      setCleanDaysInput(String(body.days))
+      toast.success(`清理周期已设为每 ${body.days} 天一次`)
+    } finally {
+      setCleanSaving(false)
+    }
+  }
+
+  /** 立即执行一次全量清理（AlertDialog 确认后调用） */
+  const runCleanNow = async () => {
+    setCleanRunning(true)
+    try {
+      const res = await fetch('/api/admin/auto-clean/run', { method: 'POST' })
+      if (!res.ok) {
+        toast.error('清理执行失败')
+        return
+      }
+      const body = (await res.json()) as { messages: number; rooms: number; files: number }
+      toast.success(`已清空：${body.messages} 条消息、${body.rooms} 个房间、${body.files} 个文件`)
+      void loadCleanConfig()
+      void loadRooms()
+      void loadRequests()
+    } finally {
+      setCleanRunning(false)
+    }
   }
 
   if (authed === null) {
@@ -440,6 +520,75 @@ export default function AdminPage() {
               </Table>
             </div>
           )}
+
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-semibold">数据清理</h2>
+            <span className="text-xs text-muted-foreground">
+              上次清理：{cleanConfig?.lastRun != null ? formatDateTime(cleanConfig.lastRun) : '从未执行'}
+            </span>
+          </div>
+          <div className="flex flex-col gap-3 rounded-lg border bg-sidebar p-4">
+            <p className="text-sm text-muted-foreground">
+              开启后每隔指定天数自动清空全部聊天记录、会话、房间（含待审批申请）与上传文件（含磁盘占用）；节点身份与管理配置保留，清理不可恢复。
+            </p>
+            {cleanConfig === null ? (
+              <Skeleton className="h-9 w-full" />
+            ) : (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                <span className="flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={cleanConfig.enabled}
+                    onCheckedChange={(checked) => void toggleCleanEnabled(checked)}
+                    aria-label="定时清理开关"
+                  />
+                  {cleanConfig.enabled ? '已开启' : '已关闭'}
+                </span>
+                <span className="flex items-center gap-2 text-sm">
+                  每
+                  <Input
+                    type="number"
+                    min={1}
+                    max={3650}
+                    value={cleanDaysInput}
+                    onChange={(e) => setCleanDaysInput(e.target.value)}
+                    className="h-8 w-20"
+                    aria-label="清理周期天数"
+                  />
+                  天清理一次
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={cleanSaving || cleanDaysInput === String(cleanConfig.days)}
+                    onClick={() => void saveCleanDays()}
+                  >
+                    保存
+                  </Button>
+                </span>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" variant="destructive" disabled={cleanRunning} className="ml-auto">
+                      {cleanRunning && <Loader2Icon data-icon="inline-start" className="animate-spin" />}
+                      立即清理
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>立即清空全部聊天数据与房间？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        将删除所有聊天记录、会话、房间与上传文件（含磁盘占用），操作不可恢复。在线用户的列表会自动刷新。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction variant="destructive" onClick={() => void runCleanNow()}>
+                        确认清理
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            )}
+          </div>
         </div>
       </main>
     </div>

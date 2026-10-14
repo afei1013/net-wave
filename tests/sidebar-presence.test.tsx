@@ -25,6 +25,7 @@ function renderSidebar(
       rooms: [],
       peers,
       roomOnline,
+      myRequests: [],
       activeId: null,
       filter: '',
       onFilterChange: noop,

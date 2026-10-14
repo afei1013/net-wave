@@ -63,8 +63,8 @@ async function handleRequest(cookie: string, requestId: number, action: 'approve
   })
 }
 
-/** 经审批创建一个房间（测试辅助），返回其公开列表信息 */
-async function createRoomViaApproval(name: string): Promise<{ id: number; name: string }> {
+/** 经审批创建一个房间（测试辅助），返回房主与房间公开信息 */
+async function createRoomViaApproval(name: string): Promise<{ owner: string; id: number; name: string }> {
   const owner = await createPeer(app.baseUrl)
   const submit = await submitCreate(owner, name)
   expect(submit.status).toBe(202)
