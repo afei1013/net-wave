@@ -1,0 +1,287 @@
+import { openDb } from './db'
+import { fileKind, findFile, type FileMeta } from './files'
+import { findPeer, publicPeer, type PublicPeer } from './peers'
+import { isRoomMember } from './rooms'
+
+/** 节点已注销/不存在时的统一占位昵称 */
+const DEPARTED_PEER_NAME = '已离开的节点'
+
+export interface Conversation {
+  id: number
+  type: 'direct' | 'room'
+  peerA: string | null
+  peerB: string | null
+  roomId: number | null
+  createdAt: number
+}
+
+export interface MessageRow {
+  id: number
+  conversationId: number
+  senderId: string
+  senderName: string
+  senderIp: string | null
+  senderMac: string | null
+  kind: 'text' | 'image' | 'video' | 'file'
+  text: string | null
+  fileId: string | null
+  file: FileMeta | null
+  createdAt: number
+}
+
+/** 私聊会话摘要（type=direct）；peer 为出网视角（不含隐私偏好，IP/MAC 已按其偏好抹除） */
+export interface DirectSummary extends Conversation {
+  type: 'direct'
+  peer: PublicPeer
+  lastMessage: MessageRow | null
+}
+
+/** 房间会话摘要（type=room） */
+export interface RoomSummary extends Conversation {
+  type: 'room'
+  room: { id: number; name: string; memberCount: number; createdBy: string | null }
+  lastMessage: MessageRow | null
+}
+
+export type ConversationSummary = DirectSummary | RoomSummary
+
+/** 两节点间会话唯一化：peer_id 按字典序固定为 (peerA, peerB) */
+export function createOrGetConversation(me: string, other: string): Conversation | null {
+  if (me === other) return null
+  if (!findPeer(me) || !findPeer(other)) return null
+  const [a, b] = me < other ? [me, other] : [other, me]
+  const db = openDb()
+  db.prepare("INSERT OR IGNORE INTO conversations (type, peer_a, peer_b, created_at) VALUES ('direct', ?, ?, ?)").run(a, b, Date.now())
+  const row = db.prepare('SELECT * FROM conversations WHERE peer_a = ? AND peer_b = ?').get(a, b) as Record<string, unknown> | undefined
+  return row ? rowToConversation(row) : null
+}
+
+function rowToConversation(row: Record<string, unknown>): Conversation {
+  return {
+    id: row.id as number,
+    type: row.type as Conversation['type'],
+    peerA: (row.peer_a as string | null) ?? null,
+    peerB: (row.peer_b as string | null) ?? null,
+    roomId: (row.room_id as number | null) ?? null,
+    createdAt: row.created_at as number,
+  }
+}
+
+export function findConversation(id: number): Conversation | null {
+  const db = openDb()
+  const row = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  return row ? rowToConversation(row) : null
+}
+
+/** 随消息进入会话的文件：定位其所属会话（文件下载的可见性校验用） */
+export function findConversationOfFile(fileId: string): Conversation | null {
+  const db = openDb()
+  const row = db.prepare('SELECT conversation_id FROM messages WHERE file_id = ? LIMIT 1').get(fileId) as
+    | { conversation_id: number }
+    | undefined
+  return row ? findConversation(row.conversation_id) : null
+}
+
+function isParticipant(conversation: Conversation, peerId: string): boolean {
+  return conversation.peerA === peerId || conversation.peerB === peerId
+}
+
+/** 会话可见性：私聊看双方，房间看成员 */
+export function canAccessConversation(conversation: Conversation, peerId: string): boolean {
+  if (conversation.type === 'room') {
+    return conversation.roomId != null && isRoomMember(conversation.roomId, peerId)
+  }
+  return isParticipant(conversation, peerId)
+}
+
+export function otherPeerOf(conversation: Conversation, peerId: string): string | null {
+  if (conversation.peerA === peerId) return conversation.peerB
+  if (conversation.peerB === peerId) return conversation.peerA
+  return null
+}
+
+/** 消息统一带文件元数据（LEFT JOIN：文件被删除后仍保留标记为不可下载的元数据）与发送者昵称、网络信息 */
+const MESSAGE_SELECT = `
+  SELECT m.id, m.conversation_id, m.sender_id, m.kind, m.text, m.created_at, m.file_id,
+         f.id AS f_id, f.name AS f_name, f.size AS f_size, f.mime AS f_mime, f.uploaded_by AS f_uploaded_by,
+         f.created_at AS f_created_at, f.deleted_at AS f_deleted_at,
+         f.access_count AS f_access_count, f.last_access_at AS f_last_access_at,
+         p.name AS sender_name, p.ip AS sender_ip, p.mac AS sender_mac,
+         p.hide_ip AS sender_hide_ip, p.hide_mac AS sender_hide_mac
+  FROM messages m
+  LEFT JOIN files f ON m.file_id = f.id
+  LEFT JOIN peers p ON m.sender_id = p.id
+`
+
+function rowToMessage(row: Record<string, unknown>): MessageRow {
+  const file =
+    row.f_id != null
+      ? {
+          id: row.f_id as string,
+          name: row.f_name as string,
+          size: row.f_size as number,
+          mime: row.f_mime as string,
+          kind: fileKind(row.f_mime as string),
+          uploadedBy: (row.f_uploaded_by as string | null) ?? '',
+          createdAt: row.f_created_at as number,
+          deleted: row.f_deleted_at != null,
+          accessCount: (row.f_access_count as number | null) ?? 0,
+          lastAccessAt: (row.f_last_access_at as number | null) ?? null,
+        }
+      : null
+  return {
+    id: row.id as number,
+    conversationId: row.conversation_id as number,
+    senderId: row.sender_id as string,
+    senderName: (row.sender_name as string | null) ?? DEPARTED_PEER_NAME,
+    // 发送者关闭了 IP/MAC 显示：对任何接收方（含本人）一律不下发
+    senderIp: row.sender_hide_ip === 1 ? null : (row.sender_ip as string | null) ?? null,
+    senderMac: row.sender_hide_mac === 1 ? null : (row.sender_mac as string | null) ?? null,
+    kind: row.kind as MessageRow['kind'],
+    text: (row.text as string | null) ?? null,
+    fileId: (row.file_id as string | null) ?? null,
+    file,
+    createdAt: row.created_at as number,
+  }
+}
+
+export function listConversations(peerId: string): ConversationSummary[] {
+  const db = openDb()
+  const lastOf = (conversationId: number): MessageRow | null => {
+    const row = db
+      .prepare(`${MESSAGE_SELECT} WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 1`)
+      .get(conversationId) as Record<string, unknown> | undefined
+    return row ? rowToMessage(row) : null
+  }
+
+  const directRows = db
+    .prepare(`
+      SELECT * FROM conversations
+      WHERE type = 'direct' AND (peer_a = ? OR peer_b = ?)
+        AND id NOT IN (SELECT conversation_id FROM hidden_conversations WHERE peer_id = ?)
+      ORDER BY id DESC
+    `)
+    .all(peerId, peerId, peerId) as Record<string, unknown>[]
+  const directs: DirectSummary[] = directRows.map((row) => {
+    const conv = rowToConversation(row)
+    const otherId = otherPeerOf(conv, peerId) ?? ''
+    const other = findPeer(otherId)
+    return {
+      ...conv,
+      type: 'direct',
+      peer: other ? publicPeer(other) : { id: otherId, name: DEPARTED_PEER_NAME, ip: null, mac: null },
+      lastMessage: lastOf(conv.id),
+    }
+  })
+
+  const roomRows = db
+    .prepare(`
+      SELECT c.*, r.name AS room_name, r.created_by AS room_created_by,
+             (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count
+      FROM conversations c
+      JOIN rooms r ON c.room_id = r.id
+      JOIN room_members mem ON mem.room_id = r.id AND mem.peer_id = ?
+      WHERE c.type = 'room'
+      ORDER BY c.id DESC
+    `)
+    .all(peerId) as Record<string, unknown>[]
+  const rooms: RoomSummary[] = roomRows.map((row) => ({
+    ...rowToConversation(row),
+    type: 'room',
+    room: {
+      id: row.room_id as number,
+      name: row.room_name as string,
+      memberCount: row.member_count as number,
+      createdBy: (row.room_created_by as string | null) ?? null,
+    },
+    lastMessage: lastOf(row.id as number),
+  }))
+
+  return [...directs, ...rooms].sort((a, b) => b.id - a.id)
+}
+
+export function listMessages(conversationId: number, before?: number, limit = 50): MessageRow[] {
+  const db = openDb()
+  const rows = before
+    ? db.prepare(`${MESSAGE_SELECT} WHERE m.conversation_id = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`).all(conversationId, before, limit)
+    : db.prepare(`${MESSAGE_SELECT} WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?`).all(conversationId, limit)
+  return (rows as Record<string, unknown>[]).map(rowToMessage).reverse()
+}
+
+export function addMessage(conversationId: number, senderId: string, text: string): MessageRow {
+  const db = openDb()
+  const now = Date.now()
+  const result = db
+    .prepare('INSERT INTO messages (conversation_id, sender_id, kind, text, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(conversationId, senderId, 'text', text, now)
+  return {
+    id: Number(result.lastInsertRowid),
+    conversationId,
+    senderId,
+    ...senderNetworkOf(senderId),
+    kind: 'text',
+    text,
+    fileId: null,
+    file: null,
+    createdAt: now,
+  }
+}
+
+/** 实时投递消息时发送者的展示信息（历史读取走 SQL JOIN，这里单查一次）；隐私偏好生效时抹去 IP/MAC */
+function senderNetworkOf(senderId: string): { senderName: string; senderIp: string | null; senderMac: string | null } {
+  const peer = findPeer(senderId)
+  const visible = peer ? publicPeer(peer) : null
+  return visible
+    ? { senderName: visible.name, senderIp: visible.ip, senderMac: visible.mac }
+    : { senderName: DEPARTED_PEER_NAME, senderIp: null, senderMac: null }
+}
+
+/** 文件消息：kind 由文件 mime 推导（图片内联展示，视频下载后播放，其余为文件卡片） */
+export function addFileMessage(conversationId: number, senderId: string, fileId: string): MessageRow | null {
+  const file = findFile(fileId)
+  if (!file || file.deleted) return null
+  const db = openDb()
+  const now = Date.now()
+  const result = db
+    .prepare('INSERT INTO messages (conversation_id, sender_id, kind, file_id, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(conversationId, senderId, file.kind, fileId, now)
+  return {
+    id: Number(result.lastInsertRowid),
+    conversationId,
+    senderId,
+    ...senderNetworkOf(senderId),
+    kind: file.kind,
+    text: null,
+    fileId,
+    file,
+    createdAt: now,
+  }
+}
+
+export type ConversationHiding = { ok: true } | { ok: false; reason: 'not-found' | 'forbidden' }
+
+/** 为本节点隐藏会话（仅从该节点的列表移除；聊天记录保留，对方视角不受影响）。
+ * 仅限私聊会话：房间无隐藏语义（列表不过滤，避免静默 no-op） */
+export function hideConversationForPeer(conversationId: number, peerId: string): ConversationHiding {
+  const conversation = findConversation(conversationId)
+  if (!conversation || conversation.type !== 'direct') return { ok: false, reason: 'not-found' }
+  if (!canAccessConversation(conversation, peerId)) return { ok: false, reason: 'forbidden' }
+  const db = openDb()
+  db.prepare('INSERT OR IGNORE INTO hidden_conversations (conversation_id, peer_id) VALUES (?, ?)').run(
+    conversationId,
+    peerId,
+  )
+  return { ok: true }
+}
+
+/** 新消息进入会话时清除全部隐藏记录：隐藏的会话带着新消息重新出现在双方列表 */
+export function clearConversationHides(conversationId: number): void {
+  openDb().prepare('DELETE FROM hidden_conversations WHERE conversation_id = ?').run(conversationId)
+}
+
+/** 本人再次发起私聊时解除本人对该会话的隐藏（不动对方的隐藏记录） */
+export function clearConversationHideForPeer(conversationId: number, peerId: string): void {
+  openDb()
+    .prepare('DELETE FROM hidden_conversations WHERE conversation_id = ? AND peer_id = ?')
+    .run(conversationId, peerId)
+}

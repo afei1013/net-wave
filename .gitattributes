@@ -1,0 +1,2 @@
+# 统一 LF：部署脚本(deploy/*.sh)在 Linux 服务器执行，CRLF 会导致 bash 报错
+* text=auto eol=lf

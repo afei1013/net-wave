@@ -1,0 +1,24 @@
+services:
+  net-wave:
+    build: .
+    image: net-wave:local
+    container_name: net-wave
+    # 宿主机绑定与端口可在 .env 中覆盖（PORT）；网关模式下由 scripts/deploy-gateway.sh
+    # 注入 NW_BIND=127.0.0.1（只绑回环，局域网流量走宿主机网关）+ 独立端口
+    ports:
+      - '${NW_BIND:-0.0.0.0}:${PORT:-3000}:3000'
+    environment:
+      # 留空时首启生成随机密码并打印到日志（见 README「管理员密码」）
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+    volumes:
+      - net-wave-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  net-wave-data:

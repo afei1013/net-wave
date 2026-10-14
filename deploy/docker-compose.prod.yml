@@ -1,0 +1,12 @@
+# 生产构建覆盖文件：显式声明 npm 源构建参数
+# Dockerfile 中 ARG npm_config_registry 默认已是国内镜像源（大陆服务器构建必需），
+# 海外服务器构建时可改回 https://registry.npmjs.org
+#
+# 启动命令（在项目根目录）：
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+services:
+  net-wave:
+    build:
+      context: .
+      args:
+        npm_config_registry: https://registry.npmmirror.com
