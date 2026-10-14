@@ -10,8 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
-  "author": "",
+  "author": "afei1013",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/afei1013/net-wave.git"
+  },
   "packageManager": "pnpm@10.34.5",
   "private": true,
   "dependencies": {

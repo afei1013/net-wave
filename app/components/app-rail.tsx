@@ -63,7 +63,7 @@ export function AppRail({ onCreateRoom }: AppRailProps) {
       <Tooltip>
         <TooltipTrigger asChild>
           <a
-            href="https://github.com/VicoHu/net-wave"
+            href="https://github.com/afei1013/net-wave"
             target="_blank"
             rel="noreferrer"
             aria-label="GitHub 开源仓库"
