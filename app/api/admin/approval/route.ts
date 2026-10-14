@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireAdminSessionToken } from '@/api-auth'
 import { isRoomApprovalEnabled, setRoomApprovalEnabled } from '@/room-requests'
 
-/** 房间审批总开关：关闭后建房/加入恢复自由模式（待审申请保留，仍可继续处理） */
+/** 建房审批总开关：关闭后建房恢复自由模式（加入始终自由；待审申请保留，仍可继续处理） */
 export async function GET() {
   const token = await requireAdminSessionToken()
   if (!token) {

@@ -1,10 +1,10 @@
 import { openDb } from './db'
 import { findPeer } from './peers'
 import { getHub } from './hub'
-import { broadcastRoomOnline, createRoom, findRoom, isRoomMember, joinRoom, type RoomInfo } from './rooms'
+import { broadcastRoomOnline, createRoom, findRoom, joinRoom } from './rooms'
 
 /**
- * 房间审批：开启后建房/加入房间需管理员在 /admin 审批。
+ * 房间审批：开启后「创建房间」需管理员在 /admin 审批（加入房间始终自由）。
  * 开关持久在 settings 表（room_approval = on/off）；未设置时以环境变量
  * NW_ROOM_APPROVAL 为初始值（缺省 on），管理员后台可随时切换。
  */
@@ -74,32 +74,6 @@ export function submitCreateRoomRequest(peerId: string, name: string): CreateReq
   return { ok: true, request: { id: Number(result.lastInsertRowid), kind: 'create', roomId: null, roomName: trimmed, createdAt: now }, duplicated: false }
 }
 
-export type JoinRequestResult =
-  /** 已是成员：无需申请，直接按加入成功返回（与自由模式幂等口径一致） */
-  | { ok: true; member: true; room: RoomInfo }
-  | { ok: true; member: false; request: RoomRequestInfo; duplicated: boolean }
-  | { ok: false; reason: 'room-not-found' | 'unknown-peer' }
-
-/** 提交加入申请：同一节点同房间 pending 幂等返回；已是成员则直入 */
-export function submitJoinRoomRequest(peerId: string, roomId: number): JoinRequestResult {
-  if (!findPeer(peerId)) return { ok: false, reason: 'unknown-peer' }
-  const room = findRoom(roomId)
-  if (!room) return { ok: false, reason: 'room-not-found' }
-  if (isRoomMember(roomId, peerId)) return { ok: true, member: true, room }
-  const db = openDb()
-  const existing = db
-    .prepare(
-      "SELECT id, kind, room_id AS roomId, room_name AS roomName, peer_id AS peerId, status, created_at AS createdAt, handled_at AS handledAt FROM room_requests WHERE kind = 'join' AND peer_id = ? AND room_id = ? AND status = 'pending'",
-    )
-    .get(peerId, roomId) as RequestRow | undefined
-  if (existing) return { ok: true, member: false, request: toInfo(existing), duplicated: true }
-  const now = Date.now()
-  const result = db
-    .prepare("INSERT INTO room_requests (kind, room_id, peer_id, status, created_at) VALUES ('join', ?, ?, 'pending', ?)")
-    .run(roomId, peerId, now)
-  return { ok: true, member: false, request: { id: Number(result.lastInsertRowid), kind: 'join', roomId, roomName: null, createdAt: now }, duplicated: false }
-}
-
 /** 管理端待审列表：join 类的房间名从 rooms 表带出，按申请时间正序 */
 export function listPendingRoomRequestsForAdmin(): AdminRoomRequestInfo[] {
   const db = openDb()
@@ -116,15 +90,14 @@ export function listPendingRoomRequestsForAdmin(): AdminRoomRequestInfo[] {
     .all() as AdminRoomRequestInfo[]
 }
 
-/** 用户本人的待审申请（用户侧「审批中」标记） */
+/** 用户本人的待审建房申请（侧栏「审批中」标记；加入自由，不产生申请） */
 export function listMyPendingRequests(peerId: string): RoomRequestInfo[] {
   const db = openDb()
   return db
     .prepare(
-      `SELECT rr.id, rr.kind, rr.room_id AS roomId, COALESCE(rr.room_name, r.name) AS roomName, rr.created_at AS createdAt
+      `SELECT rr.id, rr.kind, rr.room_id AS roomId, rr.room_name AS roomName, rr.created_at AS createdAt
        FROM room_requests rr
-       LEFT JOIN rooms r ON r.id = rr.room_id
-       WHERE rr.status = 'pending' AND rr.peer_id = ?
+       WHERE rr.status = 'pending' AND rr.peer_id = ? AND rr.kind = 'create'
        ORDER BY rr.created_at ASC, rr.id ASC`,
     )
     .all(peerId) as RoomRequestInfo[]
@@ -135,7 +108,8 @@ export type HandleResult =
   | { ok: false; reason: 'not-found' | 'already-handled' | 'room-gone' | 'invalid-name' }
 
 /**
- * 处理待审申请：批准建房即真正创建房间（申请人自动成为成员）；批准加入即入成员。
+ * 处理待审申请：批准建房即真正创建房间（申请人自动成为成员）。
+ * join 分支仅用于处理历史遗留的加入申请（加入现已自由），批准即入成员。
  * 处理结果经 WS 推给申请人（room-request-result），批准时附带列表刷新广播。
  * 拒绝后申请人可重新提交（历史记录保留在库中）。
  */

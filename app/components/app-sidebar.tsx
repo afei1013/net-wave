@@ -21,7 +21,7 @@ interface AppSidebarProps {
   peers: Peer[]
   /** 各房间在线成员数（room-online 事件）；null 表示广播未到达，不展示 */
   roomOnline?: Record<string, number> | null
-  /** 本人待审的房间申请：对应行展示「审批中」并禁点，建房申请单列置灰行 */
+  /** 本人待审的建房申请：单列置灰行展示「审批中」（加入始终自由） */
   myRequests: RoomRequest[]
   activeId: number | null
   filter: string
@@ -93,10 +93,7 @@ export function AppSidebar({
   )
   const joinedRoomIds = new Set(conversations.filter((c) => c.type === 'room').map((c) => c.room?.id))
   const joinableRooms = rooms.filter((r) => !joinedRoomIds.has(r.id) && matched(r.name, filter))
-  // 待审申请：加入申请按房间禁点，建房申请单列置灰行
-  const pendingJoinRoomIds = new Set(
-    myRequests.filter((r) => r.kind === 'join' && r.roomId != null).map((r) => r.roomId as number),
-  )
+  // 待审建房申请单列置灰行（加入自由，无审批中状态）
   const pendingCreateRequests = myRequests.filter((r) => r.kind === 'create' && matched(r.roomName ?? undefined, filter))
   const onlinePeerIds = new Set(peers.map((p) => p.id))
   const onlinePeers = peers.filter(
@@ -244,32 +241,21 @@ export function AppSidebar({
                 <Badge variant="secondary" className="shrink-0 text-[10px]">审批中</Badge>
               </div>
             ))}
-            {joinableRooms.map((room) => {
-              const pending = pendingJoinRoomIds.has(room.id)
-              return (
-                <button
-                  key={room.id}
-                  type="button"
-                  disabled={pending}
-                  className={cn(rowClass(), pending && 'cursor-not-allowed opacity-60 hover:bg-transparent')}
-                  onClick={() => !pending && onJoinRoom(room.id)}
-                >
-                  <HashIcon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate text-sm">{room.name}</span>
-                  {pending ? (
-                    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                      <ClockIcon className="size-3" />
-                      审批中
-                    </span>
-                  ) : (
-                    <span className="flex shrink-0 items-center gap-0.5 text-xs text-primary">
-                      <PlusIcon className="size-3" />
-                      加入
-                    </span>
-                  )}
-                </button>
-              )
-            })}
+            {joinableRooms.map((room) => (
+              <button
+                key={room.id}
+                type="button"
+                className={rowClass()}
+                onClick={() => onJoinRoom(room.id)}
+              >
+                <HashIcon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-sm">{room.name}</span>
+                <span className="flex shrink-0 items-center gap-0.5 text-xs text-primary">
+                  <PlusIcon className="size-3" />
+                  加入
+                </span>
+              </button>
+            ))}
           </>
         )}
 

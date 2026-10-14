@@ -413,14 +413,10 @@ function HomeInner() {
       toast.error('加入房间失败')
       return
     }
-    const body = (await res.json()) as RoomInfo & { pending?: boolean }
-    if (body.pending) {
-      toast.info('加入申请已提交，等待管理员审批')
-      await loadRooms()
-      return
-    }
+    // 加入始终自由（审批仅约束建房），直接进入会话
+    const room = (await res.json()) as RoomInfo
     await Promise.all([loadRooms(), loadConversations()])
-    openConversation(body.conversationId)
+    openConversation(room.conversationId)
   }
 
   const deleteRoom = async (room: { id: number; name: string; conversationId: number }) => {

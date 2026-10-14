@@ -130,32 +130,27 @@ describe('房间审批', () => {
     expect(((await listPending(cookie)).filter((r) => r.roomName === '幂等建房'))).toHaveLength(1)
   })
 
-  it('加入走审批：通过后成为成员；已是成员再点加入幂等直入', async () => {
-    const { owner, id: roomId, name } = await createRoomViaApproval('审批加入房')
+  it('加入始终自由：审批开启时直接加入成功且不产生待审申请', async () => {
+    const { owner, id: roomId, name } = await createRoomViaApproval('自由加入房')
     const joiner = await createPeer(app.baseUrl)
 
     const join = await submitJoin(joiner, roomId)
-    expect(join.status).toBe(202)
-    expect(((await join.json()) as { pending: boolean }).pending).toBe(true)
+    expect(join.status).toBe(200)
 
-    const cookie = await adminLogin()
-    const target = (await listPending(cookie)).find((r) => r.kind === 'join' && r.roomId === roomId)
-    expect(target?.peerId).toBe(joiner)
-    expect((await handleRequest(cookie, target!.id, 'approve')).status).toBe(200)
-
-    // 成员生效：会话列表出现该房间
+    // 成员生效：会话列表出现该房间；已是成员再次加入幂等
     const convs = await fetch(`${app.baseUrl}/api/conversations`, { headers: { Cookie: `nw_peer=${joiner}` } })
     const convsBody = (await convs.json()) as { conversations: { type: string; room?: { name: string } }[] }
     expect(convsBody.conversations.some((c) => c.type === 'room' && c.room?.name === name)).toBe(true)
+    expect((await submitJoin(joiner, roomId)).status).toBe(200)
 
-    // 已是成员：再次加入与自由模式一致（200 直入而非 202 申请）
-    const again = await submitJoin(joiner, roomId)
-    expect(again.status).toBe(200)
-
-    // 房主仍为创建者视角成员数 2
     const roomsRes = await fetch(`${app.baseUrl}/api/rooms`, { headers: { Cookie: `nw_peer=${owner}` } })
     const room = ((await roomsRes.json()) as { rooms: { name: string; memberCount: number }[] }).rooms.find((r) => r.name === name)
     expect(room?.memberCount).toBe(2)
+
+    // 我的待审申请不含加入（列表仅建房申请）
+    const mineRes = await fetch(`${app.baseUrl}/api/rooms`, { headers: { Cookie: `nw_peer=${joiner}` } })
+    const mine = ((await mineRes.json()) as { myRequests: { kind: string }[] }).myRequests
+    expect(mine.filter((r) => r.kind === 'join')).toHaveLength(0)
   })
 
   it('加入不存在的房间返回 404（不产生申请）', async () => {
@@ -182,23 +177,18 @@ describe('房间审批', () => {
     expect(second!.id).not.toBe(first!.id)
   })
 
-  it('删除房间连带关闭待审的加入申请', async () => {
-    const { owner, id: roomId } = await createRoomViaApproval('连带关闭房')
-    const joiner = await createPeer(app.baseUrl)
-    expect((await submitJoin(joiner, roomId)).status).toBe(202)
-
-    // 房主删除房间
+  it('删除房间：创建者可删且待审队列无残留', async () => {
+    const { owner, id: roomId } = await createRoomViaApproval('删除连带房')
     const del = await fetch(`${app.baseUrl}/api/rooms/${roomId}`, {
       method: 'DELETE',
       headers: { Cookie: `nw_peer=${owner}` },
     })
     expect(del.status).toBe(200)
-
     const cookie = await adminLogin()
-    expect((await listPending(cookie)).filter((r) => r.roomId === roomId)).toHaveLength(0)
+    expect((await listPending(cookie)).filter((r) => r.peerId === owner)).toHaveLength(0)
   })
 
-  it('审批开关：关闭后建房/加入恢复自由模式', async () => {
+  it('审批开关：关闭后建房恢复自由模式（加入本就自由）', async () => {
     const cookie = await adminLogin()
     const off = await fetch(`${app.baseUrl}/api/admin/approval`, {
       method: 'PUT',
@@ -216,7 +206,7 @@ describe('房间审批', () => {
     const other = await createPeer(app.baseUrl)
     expect((await submitJoin(other, room.id)).status).toBe(200)
 
-    // 重新开启：恢复 202 申请
+    // 重新开启：建房恢复 202 申请
     const on = await fetch(`${app.baseUrl}/api/admin/approval`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },

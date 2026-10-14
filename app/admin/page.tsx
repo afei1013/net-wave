@@ -262,7 +262,7 @@ export default function AdminPage() {
       return
     }
     setApprovalEnabled(enabled)
-    toast.success(enabled ? '已开启审批：建房与加入需管理员同意' : '已关闭审批：建房与加入恢复自由模式')
+    toast.success(enabled ? '已开启审批：建房需管理员同意' : '已关闭审批：建房恢复自由模式（加入始终自由）')
   }
 
   /** 定时清理开关：即时生效 */
@@ -364,7 +364,7 @@ export default function AdminPage() {
               )}
             </h2>
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              {approvalEnabled != null && (approvalEnabled ? '建房与加入需审批' : '自由建房与加入')}
+              {approvalEnabled != null && (approvalEnabled ? '建房需审批 · 加入自由' : '自由建房（加入始终自由）')}
               <Switch
                 checked={approvalEnabled ?? false}
                 disabled={approvalEnabled == null}
