@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1
 
-# ---------- 依赖安装：带原生模块编译工具链（better-sqlite3） ----------
+# ---------- 依赖安装：使用 better-sqlite3 自带的全平台预编译二进制 ----------
 FROM node:24-alpine AS deps
 # npm 源默认走国内镜像（大陆服务器构建必需）；海外构建可用
 # --build-arg npm_config_registry=https://registry.npmjs.org 覆盖
 ARG npm_config_registry=https://registry.npmmirror.com
 ENV npm_config_registry=${npm_config_registry}
-RUN apk add --no-cache python3 make g++ && corepack enable
+RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
-# onlyBuiltDependencies 已在 package.json 放行 better-sqlite3 的安装期构建
-RUN pnpm install --frozen-lockfile
+# --ignore-scripts：better-sqlite3 无 install 脚本但含 binding.gyp，pnpm 会隐式触发
+# node-gyp 源码编译（musl 头文件需从 unofficial-builds.nodejs.org 下载，大陆网络
+# 易超时）；包内已自带 prebuilds/（含 alpine 的 linuxmusl-*），运行期由 node-gyp-build
+# 直接加载，编译既无必要也拖慢构建，故跳过
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ---------- 构建：产出 .next 并裁剪运行时不需要的依赖 ----------
 FROM deps AS build
