@@ -17,6 +17,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const result = submitViewRequest(peerId, roomId)
   if (!result.ok) {
     if (result.reason === 'room-not-found') return NextResponse.json({ error: '房间不存在' }, { status: 404 })
+    if (result.reason === 'room-not-encrypted') {
+      return NextResponse.json({ error: '该房间未开启加密，无需申请历史查看权限' }, { status: 409 })
+    }
     return NextResponse.json({ error: '你已拥有该房间的全部查看权限，无需申请' }, { status: 409 })
   }
   return NextResponse.json({ pending: true, duplicated: result.duplicated }, { status: result.duplicated ? 200 : 202 })

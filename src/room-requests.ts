@@ -2,7 +2,7 @@ import { openDb } from './db'
 import { findPeer } from './peers'
 import { getHub } from './hub'
 import { broadcastRoomOnline, createRoom, findRoom, joinRoom } from './rooms'
-import { grantViewPermission } from './e2e'
+import { grantViewPermission, isRoomE2eActive } from './e2e'
 
 /**
  * 房间审批：开启后「创建房间」需管理员在 /admin 审批（加入房间始终自由）。
@@ -107,7 +107,7 @@ export function listMyPendingRequests(peerId: string): RoomRequestInfo[] {
 
 export type HandleResult =
   | { ok: true; approved: boolean; kind: 'create' | 'join' | 'view'; roomName: string | null; peerId: string }
-  | { ok: false; reason: 'not-found' | 'already-handled' | 'room-gone' | 'invalid-name' }
+  | { ok: false; reason: 'not-found' | 'already-handled' | 'room-gone' | 'room-not-encrypted' | 'invalid-name' }
 
 /**
  * 处理待审申请：批准建房即真正创建房间（申请人自动成为成员）。
@@ -153,6 +153,11 @@ export function handleRoomRequest(requestId: number, approve: boolean): HandleRe
     if (!room) {
       markHandled('rejected')
       return { ok: false, reason: 'room-gone' }
+    }
+    // 联动约束：房间已放开加密（或总开关关闭）时授权无意义，自动关闭该申请
+    if (!isRoomE2eActive(room.id)) {
+      markHandled('rejected')
+      return { ok: false, reason: 'room-not-encrypted' }
     }
     markHandled('approved')
     // 授权即完成可见性变更；grantViewPermission 内部会通知该节点并推送会话刷新

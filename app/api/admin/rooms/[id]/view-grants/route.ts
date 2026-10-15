@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireAdminSessionToken } from '@/api-auth'
-import { grantViewPermission, listViewGrants, revokeViewPermission } from '@/e2e'
+import { grantViewPermission, isRoomE2eActive, listViewGrants, revokeViewPermission } from '@/e2e'
 import { findRoom } from '@/rooms'
 import { findPeer } from '@/peers'
 
@@ -32,6 +32,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   if (!peerId || !findPeer(peerId)) {
     return NextResponse.json({ error: '节点不存在' }, { status: 404 })
+  }
+  // 联动约束：仅对「加密生效中」的房间可授权（总开关关/房间放开加密时无意义）
+  if (!isRoomE2eActive(roomId)) {
+    return NextResponse.json({ error: '该房间未开启加密，无需授权历史查看' }, { status: 409 })
   }
   if (!grantViewPermission(roomId, peerId)) {
     return NextResponse.json({ error: '授权失败' }, { status: 500 })

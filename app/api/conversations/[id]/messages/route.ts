@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requirePeerId } from '@/api-auth'
 import { canAccessConversation, findConversation, listMessages } from '@/chat'
-import { isE2eEnabled, maskRoomMessagesFor } from '@/e2e'
+import { isRoomE2eActive, maskRoomMessagesFor } from '@/e2e'
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const peerId = await requirePeerId()
@@ -16,9 +16,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: '会话不存在' }, { status: 404 })
   }
 
-  // 端到端加密显示开启且为房间会话：非成员不再 403，改由服务端替换为加密占位
-  // （房主/授权者全明文、成员按加入时刻隔离历史、其余全部占位）
-  const e2eRoom = isE2eEnabled() && conversation.type === 'room' && conversation.roomId != null
+  // 端到端加密在该房间实际生效（总开关开启且房间未放开加密）时：非成员不再 403，
+  // 改由服务端替换为加密占位（房主/授权者全明文、成员按加入时刻隔离历史、其余全部占位）
+  const e2eRoom = conversation.type === 'room' && conversation.roomId != null && isRoomE2eActive(conversation.roomId)
   if (!e2eRoom && !canAccessConversation(conversation, peerId)) {
     return NextResponse.json({ error: '无权访问该会话' }, { status: 403 })
   }

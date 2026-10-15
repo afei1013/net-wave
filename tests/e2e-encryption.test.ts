@@ -210,7 +210,54 @@ describe('端到端加密显示（历史隔离 + 授权）', () => {
     expect(view.body.meta).toEqual({ masked: false, fullAccess: true })
     conn.ws.close()
 
+    // 联动约束：总开关关闭时，房间级开关接口被拒绝（409）
+    const roomToggle = await adminPut(`/api/admin/rooms/${room.id}/encryption`, { encrypted: false })
+    expect(roomToggle.status).toBe(409)
+
     // 恢复开启，不影响后续用例
     await adminPut('/api/admin/e2e', { enabled: true })
+  })
+
+  it('房间级粒度：放开加密的房间恢复原有行为，申请/授权随之失效', async () => {
+    const { owner, conn, room } = await roomWithMessage('房间粒度房', '房间粒度的秘密')
+    const outsider = await createPeer(app.baseUrl)
+    const joiner = await createPeer(app.baseUrl)
+    await fetch(`${app.baseUrl}/api/rooms/${room.id}/join`, { method: 'POST', headers: { Cookie: `nw_peer=${joiner}` } })
+
+    // 默认房间加密（继承总开关开启）：外人占位、成员历史隔离
+    expect((await fetchMessages(outsider, room.conversationId)).body.meta?.fullAccess).toBe(false)
+
+    // 管理员放开该房间加密
+    const relax = await adminPut(`/api/admin/rooms/${room.id}/encryption`, { encrypted: false })
+    expect(relax.status).toBe(200)
+
+    // 该房间恢复原有行为：非成员 403、成员（含加入前历史）全明文
+    expect((await fetchMessages(outsider, room.conversationId)).status).toBe(403)
+    const view = await fetchMessages(joiner, room.conversationId)
+    expect(view.body.messages.map((m) => m.text)).toContain('房间粒度的秘密')
+    expect(view.body.meta).toEqual({ masked: false, fullAccess: true })
+
+    // 联动：房间放开加密后申请被拒（409）、主动授权被拒（409）
+    const apply = await fetch(`${app.baseUrl}/api/rooms/${room.id}/view-request`, {
+      method: 'POST',
+      headers: { Cookie: `nw_peer=${outsider}` },
+    })
+    expect(apply.status).toBe(409)
+    const cookie = await adminLogin()
+    const grant = await fetch(`${app.baseUrl}/api/admin/rooms/${room.id}/view-grants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ peerId: outsider }),
+    })
+    expect(grant.status).toBe(409)
+
+    // 房主视角不受影响
+    expect((await fetchMessages(owner, room.conversationId)).body.messages[0].text).toBe('房间粒度的秘密')
+    conn.ws.close()
+
+    // 恢复房间加密，验证可再开启
+    const reEncrypt = await adminPut(`/api/admin/rooms/${room.id}/encryption`, { encrypted: true })
+    expect(reEncrypt.status).toBe(200)
+    expect((await fetchMessages(outsider, room.conversationId)).body.meta?.fullAccess).toBe(false)
   })
 })

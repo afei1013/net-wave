@@ -26,6 +26,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (result.reason === 'room-gone') {
       return NextResponse.json({ error: '目标房间已被删除，该申请已自动关闭' }, { status: 410 })
     }
+    if (result.reason === 'room-not-encrypted') {
+      return NextResponse.json({ error: '该房间已放开加密（或总开关关闭），历史查看授权已无意义，申请已自动关闭' }, { status: 409 })
+    }
     return NextResponse.json({ error: '房间名无效（1-50 个字符），无法创建' }, { status: 400 })
   }
   return NextResponse.json({ handled: true, approved: result.approved, kind: result.kind, roomName: result.roomName })

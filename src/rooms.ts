@@ -14,12 +14,15 @@ export interface RoomInfo {
   createdBy: string | null
   memberCount: number
   conversationId: number
+  /** 房间级加密标志（端到端加密显示的总开关开启时生效）：关=该房间恢复原有可见性行为 */
+  encrypted: boolean
 }
 
 const ROOM_SELECT = `
   SELECT r.id, r.name, r.created_by AS createdBy,
          (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS memberCount,
-         c.id AS conversationId
+         c.id AS conversationId,
+         COALESCE(r.encrypted, 1) = 1 AS encrypted
   FROM rooms r JOIN conversations c ON c.room_id = r.id
 `
 
@@ -36,7 +39,7 @@ export function createRoom(peerId: string, name: string): RoomInfo | null {
     .run(roomId, now)
   const conversationId = Number(conversation.lastInsertRowid)
   db.prepare('INSERT OR IGNORE INTO room_members (room_id, peer_id, joined_at) VALUES (?, ?, ?)').run(roomId, peerId, now)
-  return { id: roomId, name: trimmed, createdBy: peerId, memberCount: 1, conversationId }
+  return { id: roomId, name: trimmed, createdBy: peerId, memberCount: 1, conversationId, encrypted: true }
 }
 
 export function listRooms(): RoomInfo[] {
@@ -53,6 +56,7 @@ export function listRoomsForAdmin(): (RoomInfo & { creatorName: string | null; m
              (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS memberCount,
              (SELECT COUNT(*) FROM messages msg JOIN conversations c ON msg.conversation_id = c.id WHERE c.room_id = r.id) AS messageCount,
              c.id AS conversationId,
+             COALESCE(r.encrypted, 1) = 1 AS encrypted,
              p.name AS creatorName
       FROM rooms r
       JOIN conversations c ON c.room_id = r.id

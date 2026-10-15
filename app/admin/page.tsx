@@ -51,6 +51,8 @@ interface AdminRoom {
   memberCount: number
   messageCount: number
   createdAt: number
+  /** 房间级加密标志（总开关开启时生效） */
+  encrypted: boolean
 }
 
 interface AdminRoomRequest {
@@ -256,6 +258,22 @@ export default function AdminPage() {
     }
     toast.success(`已删除房间 ${name}`)
     void loadRooms()
+  }
+
+  /** 房间级加密开关：放开=该房间恢复原有可见性（授权/申请随之失效）；仅总开关开启时可设置 */
+  const toggleRoomEncryption = async (room: AdminRoom, encrypted: boolean) => {
+    const res = await fetch(`/api/admin/rooms/${room.id}/encryption`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ encrypted }),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      toast.error(body.error ?? '切换失败')
+      return
+    }
+    setRooms((prev) => (prev ? prev.map((r) => (r.id === room.id ? { ...r, encrypted } : r)) : prev))
+    toast.success(encrypted ? `「${room.name}」已开启加密：历史隔离与授权生效` : `「${room.name}」已放开加密：恢复原有可见性`)
   }
 
   /** 审批操作：批准建房会真正创建房间，两个列表都刷新 */
@@ -580,6 +598,7 @@ export default function AdminPage() {
                     <TableHead>成员</TableHead>
                     <TableHead>消息数</TableHead>
                     <TableHead>创建时间</TableHead>
+                    <TableHead>加密</TableHead>
                     <TableHead className="pr-4 text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -602,17 +621,29 @@ export default function AdminPage() {
                       <TableCell>{room.memberCount}</TableCell>
                       <TableCell>{room.messageCount}</TableCell>
                       <TableCell className="text-muted-foreground">{formatDateTime(room.createdAt)}</TableCell>
+                      <TableCell>
+                        {/* 联动：端到端加密总开关开启才可设置房间级开关 */}
+                        <Switch
+                          checked={room.encrypted}
+                          disabled={e2eEnabled !== true}
+                          onCheckedChange={(checked) => void toggleRoomEncryption(room, checked)}
+                          aria-label={`${room.encrypted ? '关闭' : '开启'} ${room.name} 的加密`}
+                        />
+                      </TableCell>
                       <TableCell className="pr-4 text-right">
                         <span className="flex justify-end gap-0.5">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`管理 ${room.name} 的历史查看授权`}
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={() => void openGrants(room)}
-                          >
-                            <KeyRoundIcon />
-                          </Button>
+                          {/* 联动：仅「总开关开 + 该房间加密中」时授权有意义 */}
+                          {e2eEnabled && room.encrypted && (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`管理 ${room.name} 的历史查看授权`}
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => void openGrants(room)}
+                            >
+                              <KeyRoundIcon />
+                            </Button>
+                          )}
                           <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="icon-sm" aria-label={`删除房间 ${room.name}`} className="text-muted-foreground hover:text-destructive">

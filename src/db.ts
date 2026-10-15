@@ -101,6 +101,10 @@ export function openDb(dataDir = process.env.DATA_DIR ?? './data'): Database.Dat
   if (!roomColumns.some((c) => c.name === 'created_by')) {
     db.exec('ALTER TABLE rooms ADD COLUMN created_by TEXT')
   }
+  // 增量迁移：既有库的 rooms 增加房间级加密标志（端到端加密显示，默认 1=加密）
+  if (!roomColumns.some((c) => c.name === 'encrypted')) {
+    db.exec('ALTER TABLE rooms ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 1')
+  }
   // 增量迁移：既有库的 peers 增加 ip/mac（消息区展示节点网络信息）
   const peerColumns = db.prepare('PRAGMA table_info(peers)').all() as { name: string }[]
   for (const column of ['ip', 'mac']) {

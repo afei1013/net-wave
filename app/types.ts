@@ -18,6 +18,8 @@ export interface RoomInfo {
   createdBy: string | null
   memberCount: number
   conversationId: number
+  /** 房间级加密标志（总开关开启时生效）：false=该房间恢复原有可见性，授权/申请随之失效 */
+  encrypted: boolean
 }
 
 /** 房间申请（建房/查看历史权限）：pending 期间侧栏展示「审批中」；view 为历史查看授权申请 */

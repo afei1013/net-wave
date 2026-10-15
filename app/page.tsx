@@ -127,8 +127,6 @@ function HomeInner() {
   const [unreadFlash, setUnreadFlash] = useState(false)
   // 消息接口下发的可见性元数据（端到端加密显示）：提示条与预览操作栏依据
   const [messagesMeta, setMessagesMeta] = useState<MessagesMeta>({ masked: false, fullAccess: true })
-  // 端到端加密显示总开关（GET /api/rooms 下发）
-  const [e2eEnabled, setE2eEnabled] = useState(false)
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [centerInfo, setCenterInfo] = useState<CenterInfo | null>(null)
   const [qrVisible, setQrVisible] = useState(false)
@@ -194,12 +192,10 @@ function HomeInner() {
     const body = (await res.json()) as {
       rooms: RoomInfo[]
       approvalEnabled?: boolean
-      e2eEnabled?: boolean
       myRequests?: RoomRequest[]
     }
     setRooms(body.rooms)
     if (body.approvalEnabled != null) setApprovalEnabled(body.approvalEnabled)
-    if (body.e2eEnabled != null) setE2eEnabled(body.e2eEnabled)
     setMyRequests(body.myRequests ?? [])
   }, [])
 
@@ -685,14 +681,14 @@ function HomeInner() {
               loadingOlder={loadingOlder}
               emptyContent={
                 <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-                  {e2eEnabled ? '🔒 该房间的消息已端到端加密' : '加入房间后即可查看聊天记录'}
+                  {previewRoom.encrypted ? '🔒 该房间的消息已端到端加密' : '加入房间后即可查看聊天记录'}
                 </div>
               }
             />
             <div className="border-t border-white/[0.06] px-4 py-4">
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <Button onClick={() => void joinRoom(previewRoom.id)}>加入房间</Button>
-                {e2eEnabled &&
+                {previewRoom.encrypted &&
                   (messagesMeta.fullAccess ? (
                     <span className="text-xs text-muted-foreground">你已获授权，可查看全部历史</span>
                   ) : myRequests.some((r) => r.kind === 'view' && r.roomId === previewRoom.id) ? (
@@ -711,8 +707,8 @@ function HomeInner() {
                   ))}
               </div>
               <p className="mt-2 text-center text-xs text-muted-foreground">
-                {e2eEnabled
-                  ? '该房间开启了端到端加密显示：历史消息仅对成员（加入后）、房主与获授权节点可见'
+                {previewRoom.encrypted
+                  ? '该房间开启了端到端加密：历史消息仅对成员（加入后）、房主与获授权节点可见'
                   : '加入后即可查看并参与聊天'}
               </p>
             </div>
