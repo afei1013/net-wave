@@ -2,9 +2,10 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeftIcon, HashIcon, WavesIcon } from 'lucide-react'
+import { ArrowLeftIcon, EyeIcon, HashIcon, LockIcon, WavesIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@components/ui/button'
+import { Badge } from '@components/ui/badge'
 import { Switch } from '@components/ui/switch'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@components/ui/empty'
 import {
@@ -49,6 +50,12 @@ const SIDEBAR_WIDTH_DEFAULT = 280
 
 /** 历史消息分页大小：与后端 listMessages 默认值一致，返回不足一页即已翻尽 */
 const MESSAGES_PAGE_SIZE = 50
+
+/** 消息接口的可见性元数据：masked=本次含加密占位行；fullAccess=房主/授权者全明文 */
+interface MessagesMeta {
+  masked: boolean
+  fullAccess: boolean
+}
 
 const clampWidth = (value: number) =>
   Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, value))
@@ -118,6 +125,10 @@ function HomeInner() {
   const [approvalEnabled, setApprovalEnabled] = useState(false)
   const [myRequests, setMyRequests] = useState<RoomRequest[]>([])
   const [unreadFlash, setUnreadFlash] = useState(false)
+  // 消息接口下发的可见性元数据（端到端加密显示）：提示条与预览操作栏依据
+  const [messagesMeta, setMessagesMeta] = useState<MessagesMeta>({ masked: false, fullAccess: true })
+  // 端到端加密显示总开关（GET /api/rooms 下发）
+  const [e2eEnabled, setE2eEnabled] = useState(false)
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [centerInfo, setCenterInfo] = useState<CenterInfo | null>(null)
   const [qrVisible, setQrVisible] = useState(false)
@@ -160,6 +171,16 @@ function HomeInner() {
       ? (roomOnline[String(activeConversation.room.id)] ?? 0)
       : null
 
+  // 房间只读预览：URL 指向某房间会话但自己不是成员（未加入、未出现在会话列表），
+  // 且该房间在公开列表中——端到端加密显示下的「先预览、后加入/申请」入口
+  const previewRoom = useMemo(
+    () =>
+      activeId != null && activeConversation == null
+        ? rooms.find((r) => r.conversationId === activeId) ?? null
+        : null,
+    [activeId, activeConversation, rooms],
+  )
+
   const loadConversations = useCallback(async () => {
     const res = await fetch('/api/conversations')
     if (!res.ok) return
@@ -170,9 +191,15 @@ function HomeInner() {
   const loadRooms = useCallback(async () => {
     const res = await fetch('/api/rooms')
     if (!res.ok) return
-    const body = (await res.json()) as { rooms: RoomInfo[]; approvalEnabled?: boolean; myRequests?: RoomRequest[] }
+    const body = (await res.json()) as {
+      rooms: RoomInfo[]
+      approvalEnabled?: boolean
+      e2eEnabled?: boolean
+      myRequests?: RoomRequest[]
+    }
     setRooms(body.rooms)
     if (body.approvalEnabled != null) setApprovalEnabled(body.approvalEnabled)
+    if (body.e2eEnabled != null) setE2eEnabled(body.e2eEnabled)
     setMyRequests(body.myRequests ?? [])
   }, [])
 
@@ -190,6 +217,7 @@ function HomeInner() {
     setLoadingOlder(false)
     if (activeId == null) {
       setMessages([])
+      setMessagesMeta({ masked: false, fullAccess: true })
       return
     }
     let cancelled = false
@@ -197,8 +225,9 @@ function HomeInner() {
     void (async () => {
       const res = await fetch(`/api/conversations/${activeId}/messages`)
       if (!cancelled && res.ok) {
-        const body = (await res.json()) as { messages: MessageRow[] }
+        const body = (await res.json()) as { messages: MessageRow[]; meta?: MessagesMeta }
         setMessages(body.messages)
+        setMessagesMeta(body.meta ?? { masked: false, fullAccess: true })
         // 不足一页说明历史已全部加载（含空会话）
         hasMoreRef.current = body.messages.length >= MESSAGES_PAGE_SIZE
       }
@@ -218,7 +247,8 @@ function HomeInner() {
     if (current == null) return
     const res = await fetch(`/api/conversations/${current}/messages`)
     if (!res.ok) return
-    const body = (await res.json()) as { messages: MessageRow[] }
+    const body = (await res.json()) as { messages: MessageRow[]; meta?: MessagesMeta }
+    if (body.meta) setMessagesMeta(body.meta)
     setMessages((prev) => {
       const freshIds = new Set(body.messages.map((m) => m.id))
       return [...prev.filter((m) => !freshIds.has(m.id)), ...body.messages]
@@ -311,16 +341,18 @@ function HomeInner() {
         // 审批结果：批准则刷新会话与房间列表，拒绝仅提示
         const { status, kind, roomName } = data as {
           status: 'approved' | 'rejected'
-          kind: 'create' | 'join'
+          kind: 'create' | 'join' | 'view'
           roomName: string | null
         }
         if (status === 'approved') {
-          toast.success(
-            kind === 'create' ? `管理员已同意建房，「${roomName}」已创建` : `管理员已同意你加入「${roomName}」`,
-          )
+          const label = kind === 'create' ? `管理员已同意建房，「${roomName}」已创建` : kind === 'view' ? `已获得「${roomName}」的历史查看权限` : `管理员已同意你加入「${roomName}」`
+          toast.success(label)
           void loadConversations()
+          // 授权变更影响当前会话可见性：立即重拉明文/占位
+          void refreshActiveMessages()
         } else {
-          toast.error(`管理员拒绝了你的${kind === 'create' ? '建房' : '加入'}申请${roomName ? `（${roomName}）` : ''}`)
+          const label = kind === 'create' ? '建房' : kind === 'view' ? '历史查看权限申请' : '加入'
+          toast.error(`管理员拒绝了你的${label}申请${roomName ? `（${roomName}）` : ''}`)
         }
         void loadRooms()
       }
@@ -419,6 +451,21 @@ function HomeInner() {
     openConversation(room.conversationId)
   }
 
+  /** 申请房间历史查看权限（端到端加密显示：预览页/历史隔离提示条入口） */
+  const applyViewRequest = async (roomId: number, roomName: string) => {
+    const res = await fetch(`/api/rooms/${roomId}/view-request`, { method: 'POST' })
+    if (res.status === 409) {
+      toast.info('你已拥有该房间的全部查看权限，无需申请')
+      return
+    }
+    if (!res.ok) {
+      toast.error('申请提交失败')
+      return
+    }
+    toast.success(`已提交「${roomName}」的历史查看申请，等待管理员审批`)
+    await loadRooms()
+  }
+
   const deleteRoom = async (room: { id: number; name: string; conversationId: number }) => {
     const res = await fetch(`/api/rooms/${room.id}`, { method: 'DELETE' })
     setRoomToDelete(null)
@@ -493,7 +540,7 @@ function HomeInner() {
           filter={filter}
           onFilterChange={setFilter}
           onOpenConversation={(id) => void openConversation(id)}
-          onJoinRoom={(id) => void joinRoom(id)}
+          onOpenRoom={(room) => openConversation(room.conversationId)}
           onStartConversation={(id) => void startConversationWith(id)}
           onCreateRoom={() => setRoomModalVisible(true)}
           onRename={(name) => void rename(name)}
@@ -561,6 +608,30 @@ function HomeInner() {
                 />
               </div>
             </header>
+            {/* 端到端加密显示：成员查看加入前历史时的提示条与申请入口 */}
+            {activeConversation.type === 'room' && messagesMeta.masked && !messagesMeta.fullAccess && (
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] bg-rail/60 px-4 py-1.5 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <LockIcon className="size-3.5" />
+                  加入前的历史已端到端加密
+                </span>
+                {activeConversation.room &&
+                  (myRequests.some((r) => r.kind === 'view' && r.roomId === activeConversation.room?.id) ? (
+                    <span className="text-primary">历史查看申请审批中…</span>
+                  ) : (
+                    activeConversation.room && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => void applyViewRequest(activeConversation.room!.id, activeConversation.room!.name)}
+                      >
+                        申请查看历史
+                      </Button>
+                    )
+                  ))}
+              </div>
+            )}
             <MessageList
               messages={messages}
               loading={loadingMessages}
@@ -583,6 +654,68 @@ function HomeInner() {
               onSendText={(text) => sendMessage({ text })}
               onSendFile={(fileId) => sendMessage({ fileId })}
             />
+          </>
+        ) : previewRoom ? (
+          /* 房间只读预览：端到端加密显示下的「先预览（加密占位）—再加入/申请授权」流 */
+          <>
+            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/[0.06] px-3 md:px-4">
+              {isMobile && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="返回会话列表"
+                  onClick={() => router.push('/')}
+                >
+                  <ArrowLeftIcon />
+                </Button>
+              )}
+              <HashIcon className="size-5 shrink-0 text-muted-foreground" />
+              <h1 className="truncate font-semibold">{previewRoom.name}</h1>
+              <Badge variant="secondary" className="shrink-0">预览</Badge>
+              <span className="hidden shrink-0 text-sm text-muted-foreground sm:inline">
+                {previewRoom.memberCount} 名成员
+              </span>
+            </header>
+            <MessageList
+              messages={messages}
+              loading={loadingMessages}
+              display={display}
+              selfId={me?.id ?? null}
+              onLoadOlder={loadOlder}
+              loadingOlder={loadingOlder}
+              emptyContent={
+                <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+                  {e2eEnabled ? '🔒 该房间的消息已端到端加密' : '加入房间后即可查看聊天记录'}
+                </div>
+              }
+            />
+            <div className="border-t border-white/[0.06] px-4 py-4">
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button onClick={() => void joinRoom(previewRoom.id)}>加入房间</Button>
+                {e2eEnabled &&
+                  (messagesMeta.fullAccess ? (
+                    <span className="text-xs text-muted-foreground">你已获授权，可查看全部历史</span>
+                  ) : myRequests.some((r) => r.kind === 'view' && r.roomId === previewRoom.id) ? (
+                    <Button variant="secondary" disabled>
+                      历史查看申请审批中
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      className="gap-1.5"
+                      onClick={() => void applyViewRequest(previewRoom.id, previewRoom.name)}
+                    >
+                      <EyeIcon className="size-4" />
+                      申请查看历史
+                    </Button>
+                  ))}
+              </div>
+              <p className="mt-2 text-center text-xs text-muted-foreground">
+                {e2eEnabled
+                  ? '该房间开启了端到端加密显示：历史消息仅对成员（加入后）、房主与获授权节点可见'
+                  : '加入后即可查看并参与聊天'}
+              </p>
+            </div>
           </>
         ) : (
           <div className="flex flex-1 items-center justify-center p-6">

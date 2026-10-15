@@ -2,13 +2,21 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeftIcon, CheckIcon, Loader2Icon, ShieldIcon, TrashIcon, XIcon } from 'lucide-react'
+import { ArrowLeftIcon, CheckIcon, KeyRoundIcon, Loader2Icon, ShieldIcon, TrashIcon, XIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@components/ui/button'
 import { Input } from '@components/ui/input'
 import { Badge } from '@components/ui/badge'
 import { Skeleton } from '@components/ui/skeleton'
 import { Switch } from '@components/ui/switch'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,12 +55,18 @@ interface AdminRoom {
 
 interface AdminRoomRequest {
   id: number
-  kind: 'create' | 'join'
+  kind: 'create' | 'join' | 'view'
   roomId: number | null
   roomName: string | null
   peerId: string
   peerName: string | null
   createdAt: number
+}
+
+interface ViewGrant {
+  peerId: string
+  peerName: string | null
+  grantedAt: number
 }
 
 interface AutoCleanConfig {
@@ -134,6 +148,14 @@ export default function AdminPage() {
   const [cleanDaysInput, setCleanDaysInput] = useState('')
   const [cleanSaving, setCleanSaving] = useState(false)
   const [cleanRunning, setCleanRunning] = useState(false)
+  // 端到端加密显示总开关
+  const [e2eEnabled, setE2eEnabled] = useState<boolean | null>(null)
+  // 历史查看授权弹窗
+  const [grantRoom, setGrantRoom] = useState<AdminRoom | null>(null)
+  const [grantPeers, setGrantPeers] = useState<{ id: string; name: string }[]>([])
+  const [grantPeerId, setGrantPeerId] = useState('')
+  const [grantList, setGrantList] = useState<ViewGrant[]>([])
+  const [grantBusy, setGrantBusy] = useState(false)
 
   const loadRooms = useCallback(async () => {
     const res = await fetch('/api/admin/rooms')
@@ -170,6 +192,13 @@ export default function AdminPage() {
     setCleanDaysInput(String(body.days))
   }, [])
 
+  const loadE2e = useCallback(async () => {
+    const res = await fetch('/api/admin/e2e')
+    if (res.status === 401) return
+    const body = (await res.json()) as { enabled: boolean }
+    setE2eEnabled(body.enabled)
+  }, [])
+
   useEffect(() => {
     void (async () => {
       const res = await fetch('/api/admin/session')
@@ -180,6 +209,7 @@ export default function AdminPage() {
         void loadRequests()
         void loadApproval()
         void loadCleanConfig()
+        void loadE2e()
       }
     })()
   }, [loadRooms, loadRequests, loadApproval, loadCleanConfig])
@@ -203,6 +233,7 @@ export default function AdminPage() {
       void loadRequests()
       void loadApproval()
       void loadCleanConfig()
+      void loadE2e()
       return
     }
     const body = (await res.json().catch(() => ({}))) as { error?: string }
@@ -314,13 +345,82 @@ export default function AdminPage() {
         return
       }
       const body = (await res.json()) as { messages: number; rooms: number; files: number }
-      toast.success(`已清空：${body.messages} 条消息、${body.rooms} 个房间、${body.files} 个文件`)
-      void loadCleanConfig()
       void loadRooms()
       void loadRequests()
     } finally {
       setCleanRunning(false)
     }
+  }
+
+  /** 端到端加密显示总开关：即时生效 */
+  const toggleE2e = async (enabled: boolean) => {
+    const res = await fetch('/api/admin/e2e', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+    if (!res.ok) {
+      toast.error('切换端到端加密开关失败')
+      return
+    }
+    setE2eEnabled(enabled)
+    toast.success(
+      enabled
+        ? '已开启端到端加密显示：房间历史仅成员（加入后）/房主/授权者可见'
+        : '已关闭端到端加密显示：恢复原有可见性',
+    )
+  }
+
+  /** 打开历史授权弹窗：拉取节点全量列表与该房间现有授权 */
+  const openGrants = async (room: AdminRoom) => {
+    setGrantRoom(room)
+    setGrantPeerId('')
+    setGrantPeers([])
+    setGrantList([])
+    const [peersRes, grantsRes] = await Promise.all([
+      fetch('/api/admin/peers'),
+      fetch(`/api/admin/rooms/${room.id}/view-grants`),
+    ])
+    if (peersRes.ok) {
+      setGrantPeers(((await peersRes.json()) as { peers: { id: string; name: string }[] }).peers)
+    }
+    if (grantsRes.ok) {
+      setGrantList(((await grantsRes.json()) as { grants: ViewGrant[] }).grants)
+    }
+  }
+
+  const grantAccess = async () => {
+    if (!grantRoom || !grantPeerId) return
+    setGrantBusy(true)
+    try {
+      const res = await fetch(`/api/admin/rooms/${grantRoom.id}/view-grants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: grantPeerId }),
+      })
+      if (!res.ok) {
+        toast.error('授权失败')
+        return
+      }
+      setGrantList(((await res.json()) as { grants: ViewGrant[] }).grants)
+      setGrantPeerId('')
+      toast.success('已授权，该节点无需加入即可查看全部历史')
+    } finally {
+      setGrantBusy(false)
+    }
+  }
+
+  const revokeAccess = async (peerId: string) => {
+    if (!grantRoom) return
+    const res = await fetch(`/api/admin/rooms/${grantRoom.id}/view-grants?peerId=${encodeURIComponent(peerId)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      toast.error('撤销失败')
+      return
+    }
+    setGrantList(((await res.json()) as { grants: ViewGrant[] }).grants)
+    toast.success('已撤销授权')
   }
 
   if (authed === null) {
@@ -363,14 +463,25 @@ export default function AdminPage() {
                 <Badge variant="default" className="text-xs">{requests.length} 待审</Badge>
               )}
             </h2>
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              {approvalEnabled != null && (approvalEnabled ? '建房需审批 · 加入自由' : '自由建房（加入始终自由）')}
-              <Switch
-                checked={approvalEnabled ?? false}
-                disabled={approvalEnabled == null}
-                onCheckedChange={(checked) => void toggleApproval(checked)}
-                aria-label="房间审批开关"
-              />
+            <span className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span className="flex items-center gap-2">
+                {approvalEnabled != null && (approvalEnabled ? '建房需审批 · 加入自由' : '自由建房（加入始终自由）')}
+                <Switch
+                  checked={approvalEnabled ?? false}
+                  disabled={approvalEnabled == null}
+                  onCheckedChange={(checked) => void toggleApproval(checked)}
+                  aria-label="房间审批开关"
+                />
+              </span>
+              <span className="flex items-center gap-2">
+                端到端加密
+                <Switch
+                  checked={e2eEnabled ?? false}
+                  disabled={e2eEnabled == null}
+                  onCheckedChange={(checked) => void toggleE2e(checked)}
+                  aria-label="端到端加密显示开关"
+                />
+              </span>
             </span>
           </div>
           {requests === null ? (
@@ -399,8 +510,8 @@ export default function AdminPage() {
                   {requests.map((request) => (
                     <TableRow key={request.id}>
                       <TableCell className="pl-4">
-                        <Badge variant={request.kind === 'create' ? 'default' : 'secondary'}>
-                          {request.kind === 'create' ? '建房' : '加入'}
+                        <Badge variant={request.kind === 'create' ? 'default' : request.kind === 'view' ? 'outline' : 'secondary'}>
+                          {request.kind === 'create' ? '建房' : request.kind === 'view' ? '查看历史' : '加入'}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -492,7 +603,17 @@ export default function AdminPage() {
                       <TableCell>{room.messageCount}</TableCell>
                       <TableCell className="text-muted-foreground">{formatDateTime(room.createdAt)}</TableCell>
                       <TableCell className="pr-4 text-right">
-                        <AlertDialog>
+                        <span className="flex justify-end gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`管理 ${room.name} 的历史查看授权`}
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => void openGrants(room)}
+                          >
+                            <KeyRoundIcon />
+                          </Button>
+                          <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="icon-sm" aria-label={`删除房间 ${room.name}`} className="text-muted-foreground hover:text-destructive">
                               <TrashIcon />
@@ -513,6 +634,7 @@ export default function AdminPage() {
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
+                        </span>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -591,6 +713,58 @@ export default function AdminPage() {
           </div>
         </div>
       </main>
+
+      {/* 历史查看授权弹窗：选择节点授予/撤销某房间的全量明文查看权限 */}
+      <Dialog open={grantRoom !== null} onOpenChange={(open) => !open && setGrantRoom(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>「{grantRoom?.name}」历史查看授权</DialogTitle>
+            <DialogDescription>
+              被授权节点无需加入房间即可查看全部明文消息（端到端加密显示开启时生效）；房主天然拥有全部权限。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <select
+              value={grantPeerId}
+              onChange={(e) => setGrantPeerId(e.target.value)}
+              aria-label="选择节点"
+              className="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none"
+            >
+              <option value="">选择节点…</option>
+              {grantPeers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <Button size="sm" disabled={!grantPeerId || grantBusy} onClick={() => void grantAccess()}>
+              授权
+            </Button>
+          </div>
+          <div className="mt-1 flex flex-col gap-1.5">
+            {grantList.length === 0 ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">暂无授权节点</p>
+            ) : (
+              grantList.map((g) => (
+                <div key={g.peerId} className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm">
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="truncate">{g.peerName ?? '未知节点'}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{formatDateTime(g.grantedAt)}</span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => void revokeAccess(g.peerId)}
+                  >
+                    撤销
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

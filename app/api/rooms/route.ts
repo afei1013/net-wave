@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getHub } from '@/hub'
 import { requirePeerId } from '@/api-auth'
 import { broadcastRoomOnline, createRoom, listRooms } from '@/rooms'
+import { isE2eEnabled } from '@/e2e'
 import { isRoomApprovalEnabled, listMyPendingRequests, submitCreateRoomRequest } from '@/room-requests'
 
 export async function GET() {
@@ -10,6 +11,7 @@ export async function GET() {
   return NextResponse.json({
     rooms: listRooms(),
     approvalEnabled: isRoomApprovalEnabled(),
+    e2eEnabled: isE2eEnabled(),
     myRequests: listMyPendingRequests(peerId),
   })
 }

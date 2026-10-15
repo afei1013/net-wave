@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { CheckIcon, ClockIcon, HashIcon, PencilIcon, PlusIcon, QrCodeIcon, ServerIcon, SettingsIcon, TrashIcon, XIcon } from 'lucide-react'
+import { CheckIcon, ClockIcon, EyeIcon, HashIcon, PencilIcon, PlusIcon, QrCodeIcon, ServerIcon, SettingsIcon, TrashIcon, XIcon } from 'lucide-react'
 import { Input } from '@components/ui/input'
 import { Badge } from '@components/ui/badge'
 import { Button } from '@components/ui/button'
@@ -27,7 +27,8 @@ interface AppSidebarProps {
   filter: string
   onFilterChange: (value: string) => void
   onOpenConversation: (id: number) => void
-  onJoinRoom: (roomId: number) => void
+  /** 打开未加入房间的只读预览（端到端加密显示下先预览，再加入/申请） */
+  onOpenRoom: (room: RoomInfo) => void
   onStartConversation: (peerId: string) => void
   onCreateRoom: () => void
   onRename: (name: string) => void
@@ -74,7 +75,7 @@ export function AppSidebar({
   filter,
   onFilterChange,
   onOpenConversation,
-  onJoinRoom,
+  onOpenRoom,
   onStartConversation,
   onCreateRoom,
   onRename,
@@ -246,13 +247,13 @@ export function AppSidebar({
                 key={room.id}
                 type="button"
                 className={rowClass()}
-                onClick={() => onJoinRoom(room.id)}
+                onClick={() => onOpenRoom(room)}
               >
                 <HashIcon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-sm">{room.name}</span>
-                <span className="flex shrink-0 items-center gap-0.5 text-xs text-primary">
-                  <PlusIcon className="size-3" />
-                  加入
+                <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
+                  <EyeIcon className="size-3" />
+                  预览
                 </span>
               </button>
             ))}

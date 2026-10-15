@@ -46,16 +46,24 @@ export function openDb(dataDir = process.env.DATA_DIR ?? './data'): Database.Dat
       joined_at INTEGER NOT NULL,
       PRIMARY KEY (room_id, peer_id)
     );
-    -- 房间审批申请：建房（room_id 为空、room_name 记申请名）与加入（room_id 记目标房间）
+    -- 房间审批申请：建房（room_id 为空、room_name 记申请名）；join 为旧版加入审批的
+    -- 历史数据；view 为「房间历史查看权限」申请（端到端加密显示功能）
     CREATE TABLE IF NOT EXISTS room_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      kind TEXT NOT NULL CHECK (kind IN ('create', 'join')),
+      kind TEXT NOT NULL CHECK (kind IN ('create', 'join', 'view')),
       room_id INTEGER,
       room_name TEXT,
       peer_id TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
       created_at INTEGER NOT NULL,
       handled_at INTEGER
+    );
+    -- 房间历史查看授权（端到端加密显示）：管理员授予/审批通过后写入，授权者可免加入查看全部明文
+    CREATE TABLE IF NOT EXISTS room_view_grants (
+      room_id INTEGER NOT NULL,
+      peer_id TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      PRIMARY KEY (room_id, peer_id)
     );
     CREATE TABLE IF NOT EXISTS hidden_conversations (
       conversation_id INTEGER NOT NULL,
@@ -131,6 +139,34 @@ export function openDb(dataDir = process.env.DATA_DIR ?? './data'): Database.Dat
           SELECT id, 'direct', peer_a, peer_b, created_at FROM conversations;
         DROP TABLE conversations;
         ALTER TABLE conversations_migrated RENAME TO conversations;
+      `)
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+  }
+  // 增量迁移：room_requests 的 kind CHECK 扩展 'view'（历史查看权限申请），旧表约束写死需重建
+  const requestsDdl = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'room_requests'").get() as
+    | { sql: string }
+    | undefined)?.sql
+  if (requestsDdl && !requestsDdl.includes("'view'")) {
+    db.exec('BEGIN')
+    try {
+      db.exec(`
+        CREATE TABLE room_requests_migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL CHECK (kind IN ('create', 'join', 'view')),
+          room_id INTEGER,
+          room_name TEXT,
+          peer_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+          created_at INTEGER NOT NULL,
+          handled_at INTEGER
+        );
+        INSERT INTO room_requests_migrated SELECT id, kind, room_id, room_name, peer_id, status, created_at, handled_at FROM room_requests;
+        DROP TABLE room_requests;
+        ALTER TABLE room_requests_migrated RENAME TO room_requests;
       `)
       db.exec('COMMIT')
     } catch (err) {

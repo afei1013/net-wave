@@ -30,7 +30,7 @@ function renderSidebar(
       filter: '',
       onFilterChange: noop,
       onOpenConversation: noop,
-      onJoinRoom: noop,
+      onOpenRoom: noop,
       onStartConversation: noop,
       onCreateRoom: noop,
       onRename: noop,

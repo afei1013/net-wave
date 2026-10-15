@@ -20,10 +20,10 @@ export interface RoomInfo {
   conversationId: number
 }
 
-/** 房间申请（建房/加入）：审批开启时提交、管理员处理；pending 期间在侧栏展示「审批中」 */
+/** 房间申请（建房/查看历史权限）：pending 期间侧栏展示「审批中」；view 为历史查看授权申请 */
 export interface RoomRequest {
   id: number
-  kind: 'create' | 'join'
+  kind: 'create' | 'join' | 'view'
   roomId: number | null
   roomName: string | null
   createdAt: number
