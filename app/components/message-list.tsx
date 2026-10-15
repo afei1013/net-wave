@@ -242,13 +242,15 @@ function VideoCard({
       className="group relative block w-fit cursor-pointer overflow-hidden rounded-lg"
       onClick={play}
     >
-      {/* 仅取首帧作封面（preload=metadata）；安全模式开启时加高斯模糊不直接清晰展示 */}
+      {/* 仅取首帧作封面（preload=metadata）；安全模式开启时加高斯模糊不直接清晰展示；width/height 预留纵横比防抖动 */}
       <video
         src={`/api/files/${file.id}`}
         preload="metadata"
         muted
         playsInline
         aria-hidden
+        width={file.width ?? undefined}
+        height={file.height ?? undefined}
         className={cn('max-h-80 w-auto max-w-full', safeMode && 'scale-110')}
         style={safeMode ? { filter: `blur(${blurStrength}px)` } : undefined}
       />
@@ -292,10 +294,13 @@ function MessageBody({
         onClick={() => onPreviewImage(url, file.name)}
       >
         {/* 安全模式开启时高斯模糊，点击后在灯箱中清晰查看；模糊晕影由外层 overflow-hidden 裁在图片框内 */}
+        {/* width/height 属性预留纵横比：图片加载完成前后行高稳定，上翻历史不再抖动 */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={url}
           alt={file.name}
+          width={file.width ?? undefined}
+          height={file.height ?? undefined}
           className={cn('max-h-80 w-auto max-w-full', safeMode && 'scale-105')}
           style={safeMode ? { filter: `blur(${blurStrength}px)` } : undefined}
         />

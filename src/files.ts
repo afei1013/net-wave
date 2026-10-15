@@ -16,6 +16,9 @@ export interface FileMeta {
   deleted: boolean
   accessCount: number
   lastAccessAt: number | null
+  /** 媒体宽高（上传端探测存库；渲染预留纵横比防加载抖动；非媒体或旧数据为 null） */
+  width: number | null
+  height: number | null
 }
 
 /** 消息与文件统一的类型推导：图片内联展示，视频点击下载后播放，其余按文件卡片呈现 */
@@ -47,11 +50,19 @@ function rowToMeta(row: Record<string, unknown>): FileMeta {
     deleted: row.deleted_at != null,
     accessCount: (row.access_count as number | null) ?? 0,
     lastAccessAt: (row.last_access_at as number | null) ?? null,
+    width: (row.width as number | null) ?? null,
+    height: (row.height as number | null) ?? null,
   }
 }
 
-/** 流式落盘并记录元数据：全程 pipe，不在内存中缓冲文件内容 */
-export async function saveFileStream(source: Readable, name: string, mime: string, uploadedBy: string): Promise<FileMeta> {
+/** 流式落盘并记录元数据：全程 pipe，不在内存中缓冲文件内容；媒体宽高由上传端探测传入 */
+export async function saveFileStream(
+  source: Readable,
+  name: string,
+  mime: string,
+  uploadedBy: string,
+  dims?: { width: number; height: number } | null,
+): Promise<FileMeta> {
   const id = randomUUID()
   mkdirSync(filesRoot(), { recursive: true })
   let size = 0
@@ -65,8 +76,30 @@ export async function saveFileStream(source: Readable, name: string, mime: strin
 
   const createdAt = Date.now()
   const db = openDb()
-  db.prepare('INSERT INTO files (id, name, size, mime, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, name, size, mime, uploadedBy, createdAt)
-  return { id, name, size, mime, kind: fileKind(mime), uploadedBy, createdAt, deleted: false, accessCount: 0, lastAccessAt: null }
+  db.prepare('INSERT INTO files (id, name, size, mime, uploaded_by, created_at, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+    id,
+    name,
+    size,
+    mime,
+    uploadedBy,
+    createdAt,
+    dims?.width ?? null,
+    dims?.height ?? null,
+  )
+  return {
+    id,
+    name,
+    size,
+    mime,
+    kind: fileKind(mime),
+    uploadedBy,
+    createdAt,
+    deleted: false,
+    accessCount: 0,
+    lastAccessAt: null,
+    width: dims?.width ?? null,
+    height: dims?.height ?? null,
+  }
 }
 
 export function findFile(id: string): FileMeta | null {

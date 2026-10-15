@@ -106,6 +106,7 @@ const MESSAGE_SELECT = `
          f.id AS f_id, f.name AS f_name, f.size AS f_size, f.mime AS f_mime, f.uploaded_by AS f_uploaded_by,
          f.created_at AS f_created_at, f.deleted_at AS f_deleted_at,
          f.access_count AS f_access_count, f.last_access_at AS f_last_access_at,
+         f.width AS f_width, f.height AS f_height,
          p.name AS sender_name, p.ip AS sender_ip, p.mac AS sender_mac,
          p.hide_ip AS sender_hide_ip, p.hide_mac AS sender_hide_mac
   FROM messages m
@@ -127,6 +128,8 @@ function rowToMessage(row: Record<string, unknown>): MessageRow {
           deleted: row.f_deleted_at != null,
           accessCount: (row.f_access_count as number | null) ?? 0,
           lastAccessAt: (row.f_last_access_at as number | null) ?? null,
+          width: (row.f_width as number | null) ?? null,
+          height: (row.f_height as number | null) ?? null,
         }
       : null
   return {

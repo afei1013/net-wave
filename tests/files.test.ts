@@ -20,6 +20,8 @@ interface FileMeta {
   mime: string
   kind: string
   deleted?: boolean
+  width?: number | null
+  height?: number | null
 }
 
 interface FileMessageRow {
@@ -102,6 +104,47 @@ describe('图片与文件传输', () => {
     }
     a.ws.close()
     b.ws.close()
+  })
+
+  it('上传带宽高的图片：消息元数据携带尺寸（渲染端预留纵横比防抖动）', async () => {
+    const { peerA, a, b, conversationId } = await setupDirectConversation(app)
+    const form = new FormData()
+    form.append('width', '1920')
+    form.append('height', '1080')
+    form.append('file', new Blob([randomBytes(48)], { type: 'image/png' }), '带尺寸.png')
+    const res = await fetch(`${app.baseUrl}/api/files`, {
+      method: 'POST',
+      body: form,
+      headers: { Cookie: `nw_peer=${peerA}` },
+    })
+    expect(res.status).toBe(200)
+    const { fileId } = (await res.json()) as { fileId: string }
+
+    const bPromise = b.wait('message')
+    sendWs(a.ws, { type: 'send-message', conversationId, fileId })
+    const got = (await Promise.all([a.wait('message'), bPromise])) as { message: FileMessageRow }[]
+    expect(got[1].message.file?.width).toBe(1920)
+    expect(got[1].message.file?.height).toBe(1080)
+    a.ws.close()
+    b.ws.close()
+  })
+
+  it('上传不带宽高或非法宽高：尺寸为 null 不影响上传', async () => {
+    const peer = await createPeer(app.baseUrl)
+    // 不带字段
+    const none = await upload(peer, randomBytes(32), '无尺寸.png', 'image/png')
+    expect(none.fileId).toBeTruthy()
+    // 非法值（非正整数）被忽略
+    const form = new FormData()
+    form.append('width', '-5')
+    form.append('height', 'abc')
+    form.append('file', new Blob([randomBytes(32)], { type: 'image/png' }), '非法尺寸.png')
+    const bad = await fetch(`${app.baseUrl}/api/files`, {
+      method: 'POST',
+      body: form,
+      headers: { Cookie: `nw_peer=${peer}` },
+    })
+    expect(bad.status).toBe(200)
   })
 
   it('下载：字节与 Content-Type 一致', async () => {

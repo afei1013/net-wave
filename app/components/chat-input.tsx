@@ -88,9 +88,47 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
     requestAnimationFrame(autoResize)
   }
 
-  const uploadFile = (file: File) => {
+  /**
+   * 上传前探测媒体宽高（随表单提交存库；渲染端据此预留纵横比，避免消息流布局抖动）。
+   * 探测失败不阻断上传（尺寸留空，退回加载后再撑开的旧行为）。
+   */
+  const probeMediaSize = (file: File): Promise<{ width: number; height: number } | null> =>
+    new Promise((resolve) => {
+      if (file.type.startsWith('image/')) {
+        createImageBitmap(file)
+          .then((bmp) => resolve({ width: bmp.width, height: bmp.height }))
+          .catch(() => resolve(null))
+        return
+      }
+      if (file.type.startsWith('video/')) {
+        const url = URL.createObjectURL(file)
+        const video = document.createElement('video')
+        video.preload = 'metadata'
+        video.onloadedmetadata = () => {
+          URL.revokeObjectURL(url)
+          resolve(video.videoWidth > 0 && video.videoHeight > 0 ? { width: video.videoWidth, height: video.videoHeight } : null)
+        }
+        video.onerror = () => {
+          URL.revokeObjectURL(url)
+          resolve(null)
+        }
+        video.src = url
+        return
+      }
+      resolve(null)
+    })
+
+  const uploadFile = async (file: File) => {
     const key = ++uploadKeyRef.current
     setUploads((prev) => [...prev, { key, name: file.name, progress: 0 }])
+    const form = new FormData()
+    // 宽高字段放在文件前：服务端无需等待即可在解析完表单后读取
+    const dims = await probeMediaSize(file)
+    if (dims) {
+      form.append('width', String(dims.width))
+      form.append('height', String(dims.height))
+    }
+    form.append('file', file)
     const xhr = new XMLHttpRequest()
     xhr.open('POST', '/api/files')
     xhr.upload.onprogress = (e) => {
@@ -118,8 +156,6 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
       setUploads((prev) => prev.filter((u) => u.key !== key))
       toast.error(`「${file.name}」上传失败`)
     }
-    const form = new FormData()
-    form.append('file', file)
     xhr.send(form)
   }
 
@@ -131,7 +167,7 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
 
   const confirmPending = (files: File[]) => {
     setPending([])
-    for (const file of files) uploadFile(file)
+    for (const file of files) void uploadFile(file)
   }
 
   const onPickFiles = (files: FileList | null) => {

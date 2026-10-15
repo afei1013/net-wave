@@ -114,6 +114,12 @@ export function openDb(dataDir = process.env.DATA_DIR ?? './data'): Database.Dat
   if (!fileColumns.some((c) => c.name === 'last_access_at')) {
     db.exec('ALTER TABLE files ADD COLUMN last_access_at INTEGER')
   }
+  // 增量迁移：既有库的 files 增加媒体宽高（上传端探测存库，渲染时预留纵横比防布局抖动）
+  for (const column of ['width', 'height']) {
+    if (!fileColumns.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE files ADD COLUMN ${column} INTEGER`)
+    }
+  }
   // 增量迁移：conversations 增加 type/room_id（旧结构为 peer_a/peer_b NOT NULL，需重建表）
   const convColumns = db.prepare('PRAGMA table_info(conversations)').all() as { name: string }[]
   if (!convColumns.some((c) => c.name === 'type')) {

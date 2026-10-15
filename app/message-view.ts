@@ -10,6 +10,9 @@ export interface FileMeta {
   mime: string
   kind: 'image' | 'video' | 'file'
   deleted: boolean
+  /** 媒体宽高：渲染时作为 img/video 属性预留纵横比，避免加载完成后布局跳动 */
+  width?: number | null
+  height?: number | null
 }
 
 export interface MessageRow {
