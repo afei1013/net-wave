@@ -805,13 +805,14 @@ export function MessageList({
             >
               <Zoomable>
                 {/* touchAction none：双指交给 Zoomable 捏合，而非浏览器页面缩放 */}
+                {/* 首开按自然尺寸缩至 max-h 以内（小图不放大、大图不满屏），双击/捏合再看大图 */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={preview.url}
                   alt="图片预览"
                   style={{ touchAction: 'none' }}
                   draggable={false}
-                  className="max-h-[80vh] w-full rounded-lg object-contain"
+                  className="mx-auto max-h-[64vh] w-auto max-w-full rounded-lg object-contain"
                 />
               </Zoomable>
             </div>
