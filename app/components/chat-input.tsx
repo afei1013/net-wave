@@ -1,10 +1,11 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { PlusIcon, SendHorizontalIcon } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { PlusIcon, SendHorizontalIcon, SmileIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@components/ui/button'
 import { Spinner } from '@components/ui/spinner'
+import { EmojiPicker } from './emoji-picker'
 import { UploadConfirmDialog, type PendingUpload } from './upload-confirm-dialog'
 
 interface UploadTask {
@@ -28,15 +29,55 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
   const [text, setText] = useState('')
   const [uploads, setUploads] = useState<UploadTask[]>([])
   const [pending, setPending] = useState<PendingUpload[]>([])
+  const [emojiOpen, setEmojiOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const uploadKeyRef = useRef(0)
+  // 表情面板的外点关闭判定范围：输入条 + 面板整体
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // 面板打开时：点击外部或 Escape 关闭
+  useEffect(() => {
+    if (!emojiOpen) return
+    const onPointerDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setEmojiOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEmojiOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [emojiOpen])
 
   const autoResize = () => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 192)}px`
+  }
+
+  /** 表情插入输入框当前光标处（微信式：不直接发送，面板保持打开可连续选择） */
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current
+    if (!el) {
+      setText((prev) => prev + emoji)
+      return
+    }
+    const start = el.selectionStart ?? text.length
+    const end = el.selectionEnd ?? start
+    const next = text.slice(0, start) + emoji + text.slice(end)
+    setText(next)
+    // 等 React 提交新值后恢复焦点与光标（到插入内容之后），并按新内容自适应高度
+    requestAnimationFrame(() => {
+      el.focus()
+      const pos = start + emoji.length
+      el.setSelectionRange(pos, pos)
+      autoResize()
+    })
   }
 
   const send = () => {
@@ -100,7 +141,7 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
   }
 
   return (
-    <div className="px-4 pb-5">
+    <div className="px-4 pb-5" ref={rootRef}>
       {uploads.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {uploads.map((u) => (
@@ -115,7 +156,12 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
           ))}
         </div>
       )}
-      <div className="flex items-end gap-1 rounded-3xl bg-secondary px-2 py-1.5">
+      <div className="relative flex items-end gap-1 rounded-3xl bg-secondary px-2 py-1.5">
+        {emojiOpen && (
+          <div className="absolute bottom-full left-0 z-10 mb-2">
+            <EmojiPicker onPick={insertEmoji} />
+          </div>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -124,6 +170,16 @@ export function ChatInput({ placeholder, onSendText, onSendFile }: ChatInputProp
           aria-label="上传附件"
         >
           <PlusIcon />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="rounded-full text-muted-foreground hover:text-foreground"
+          onClick={() => setEmojiOpen((open) => !open)}
+          aria-label="表情"
+          aria-expanded={emojiOpen}
+        >
+          <SmileIcon />
         </Button>
         <textarea
           ref={textareaRef}

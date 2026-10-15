@@ -50,9 +50,10 @@
 }
 
 @theme inline {
+  /* 末尾的 emoji 字体链保证消息中的表情在 Windows/macOS/Android 统一彩色渲染 */
   --font-sans:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
+    'Microsoft YaHei', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji';
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
