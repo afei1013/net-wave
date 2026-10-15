@@ -124,9 +124,47 @@ echo "alias nw='docker compose -f /opt/net-wave/docker-compose.yml -f /opt/net-w
 
 之后可用 `nw ps`、`nw logs -f`、`nw restart` 等简写。
 
-### 升级发版
+### 升级发版（推荐：Git 部署，一条命令）
 
-本地改完代码后：
+本地改完代码、提交之后，只需：
+
+```bash
+bash deploy/remote-deploy.sh        # 自动：git push → 服务器 git pull → 重建容器 → 健康检查
+```
+
+**首次使用前做一次性配置：**
+
+1. 本地免密登录（输一次服务器密码）：
+
+   ```bash
+   ssh-copy-id -i ~/.ssh/id_rsa.pub root@你的服务器IP
+   ```
+
+2. 服务器改用 git 管理代码（私有库需配 GitHub Deploy Key，走 443 端口绕开对 github 22 端口的封锁）：
+
+   ```bash
+   # 服务器上执行：
+   [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+   cat ~/.ssh/id_ed25519.pub
+   # ↑ 复制输出，浏览器打开 https://github.com/afei1013/net-wave/settings/keys
+   #   → Add deploy key → 粘贴 → 不勾选写权限（只读即可）
+
+   # GitHub SSH 走 443 端口（大陆服务器直连 22 端口常不通）：
+   cat >> ~/.ssh/config <<'EOF'
+   Host github.com
+     HostName ssh.github.com
+     Port 443
+     User git
+   EOF
+
+   # 迁移现有目录并克隆（数据卷不受影响）：
+   mv /opt/net-wave /opt/net-wave.bak && git clone git@github.com:afei1013/net-wave.git /opt/net-wave
+   cp /opt/net-wave.bak/.env /opt/net-wave/.env
+   ```
+
+### 升级发版（备用：打包上传）
+
+网络不通或临时改法，仍可用原始方式：
 
 ```bash
 # 本地
