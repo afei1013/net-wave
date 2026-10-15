@@ -598,6 +598,8 @@ export function MessageList({
 }: MessageListProps) {
   const blocks = buildBlocks(messages)
   const [preview, setPreview] = useState<MediaPreview | null>(null)
+  // 单击图片延迟关闭的计时器：给双击缩放留出取消窗口（click,click,dblclick 顺序）
+  const tapCloseTimerRef = useRef<number | null>(null)
 
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -718,6 +720,10 @@ export function MessageList({
   }, [])
 
   const closePreview = () => {
+    if (tapCloseTimerRef.current != null) {
+      clearTimeout(tapCloseTimerRef.current)
+      tapCloseTimerRef.current = null
+    }
     if (preview?.type === 'video') URL.revokeObjectURL(preview.url)
     setPreview(null)
   }
@@ -784,17 +790,31 @@ export function MessageList({
         <DialogContent className="max-w-3xl border-none bg-transparent p-0 [&>button]:-top-2 [&>button]:right-0 [&>button]:rounded-full [&>button]:bg-black/60">
           <DialogTitle className="sr-only">{preview?.type === 'video' ? '视频播放' : '图片预览'}</DialogTitle>
           {preview?.type === 'image' && (
-            <Zoomable>
-              {/* touchAction none：双指交给 Zoomable 捏合，而非浏览器页面缩放 */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={preview.url}
-                alt="图片预览"
-                style={{ touchAction: 'none' }}
-                draggable={false}
-                className="max-h-[80vh] w-full rounded-lg object-contain"
-              />
-            </Zoomable>
+            <div
+              onClick={() => {
+                // 微信式：单击图片本身即可关闭（大图铺满屏幕时点空白区域不再困难）；
+                // 260ms 后生效，双击缩放会先行取消。拖拽查看已被 Zoomable 拦截不触发
+                tapCloseTimerRef.current = window.setTimeout(() => closePreview(), 260)
+              }}
+              onDoubleClick={() => {
+                if (tapCloseTimerRef.current != null) {
+                  clearTimeout(tapCloseTimerRef.current)
+                  tapCloseTimerRef.current = null
+                }
+              }}
+            >
+              <Zoomable>
+                {/* touchAction none：双指交给 Zoomable 捏合，而非浏览器页面缩放 */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={preview.url}
+                  alt="图片预览"
+                  style={{ touchAction: 'none' }}
+                  draggable={false}
+                  className="max-h-[80vh] w-full rounded-lg object-contain"
+                />
+              </Zoomable>
+            </div>
           )}
           {preview?.type === 'video' && (
             <Zoomable>
