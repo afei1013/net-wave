@@ -50,7 +50,9 @@ server {
 }
 EOF
 eval "$ENABLE_CMD"
-nginx -t >/dev/null && systemctl reload nginx
+# 分开执行让 set -e 真正生效：&& 组合中前置命令失败不会中止脚本（曾掩盖过配置错误）
+nginx -t
+systemctl reload nginx
 
 # ---------- [2/4] 签发 Let's Encrypt 证书（webroot 方式，可自动续期） ----------
 echo "==> [2/4] 签发证书"
@@ -66,7 +68,8 @@ certbot "${CERTBOT_ARGS[@]}"
 echo "==> [3/4] 部署正式 Nginx 配置"
 sed "s/net-wave\.example\.com/${DOMAIN}/g" "$ROOT/deploy/nginx-net-wave.conf" > "$SITE_PATH"
 eval "$ENABLE_CMD"
-nginx -t >/dev/null && systemctl reload nginx
+nginx -t
+systemctl reload nginx
 
 # ---------- [4/4] 续期后自动重载 nginx ----------
 echo "==> [4/4] 配置续期钩子"
